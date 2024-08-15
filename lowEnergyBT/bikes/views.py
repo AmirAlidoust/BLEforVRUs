@@ -21,7 +21,7 @@ async def scan_for_devices():
     scanner = BleakScanner()
     scanner.register_detection_callback(callback)
     await scanner.start()
-    await asyncio.sleep(5)  # Scan for 5 seconds
+    await asyncio.sleep(10)  # Scan for 10 seconds
     await scanner.stop()
     return devices
 
