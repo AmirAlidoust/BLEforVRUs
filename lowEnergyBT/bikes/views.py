@@ -6,41 +6,36 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from bleak import BleakScanner
-from .utils import calculate_distance, calculate_braking_distance, classify_risk, plot_bikes
+from .utils import calculate_distance, calculate_time_intervals, classify_risk, plot_bikes
 import matplotlib.pyplot as plt
-import time
 
 # Global shared variable to pass data between threads
 nearby_bikes_data = []
 
-# Assume some constant vehicle properties
 ACCELERATION = 2.5  # m/s^2
 DECELERATION = -4.5  # m/s^2
 VEHICLE_LENGTH = 1.8  # meters, for a bike
 LANE_WIDTH = 3.0  # meters, assume bike lane width
 PASS_SPEED = 5.0  # m/s, assume speed while passing
 
-# BLE scanning function in a separate thread
 async def scan_for_devices():
     devices = []
 
     def callback(device, advertisement_data):
         devices.append({
             "address": device.address,
-            "name": device.name,
             "rssi": advertisement_data.rssi
         })
-    
-    # Use detection_callback in the constructor
+
     scanner = BleakScanner(detection_callback=callback)
     await scanner.start()
-    await asyncio.sleep(10)  # Scan for 10 seconds
+    await asyncio.sleep(5)  # Scan for 5 seconds
     await scanner.stop()
     return devices
 
 def ble_scanning_thread():
-    """Thread responsible for BLE scanning."""
     global nearby_bikes_data
+    recognized_devices = {}
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -48,56 +43,60 @@ def ble_scanning_thread():
         devices = loop.run_until_complete(scan_for_devices())
         print(f"Discovered devices: {devices}")
 
-        # Reset nearby_bikes_data for each scan
         nearby_bikes = []
 
-        # Define an arbitrary starting position for the first bike
-        bike_position = 0
+        unique_devices = {device["address"]: device for device in devices}.values()
 
-        for device in devices:
+        for device in unique_devices:
             try:
-                rssi = device["rssi"]
                 device_address = device["address"]
+                rssi = device["rssi"]
+                print(f"recognized devices are: {recognized_devices}")
 
-                # Estimate distance using RSSI
-                distance = calculate_distance(rssi)
-                print(f"Estimated distance to other bike: {distance} meters")
+                rssi_values = [rssi]
+                distance = calculate_distance(rssi_values)
 
-                # Assume both bikes have the same initial speed
-                v0 = 10  # Speed of bike in m/s
+                recognized_devices[device_address] = distance
 
-                # Calculate braking distances
-                braking_distance = calculate_braking_distance(v0, DECELERATION)
+                v0 = 15  # m/s
 
-                #print(f"Braking distance for Bike: {braking_distance} meters")
+                # Fetching time intervals for the current bike
+                tmin_bike, tmax_bike = calculate_time_intervals(v0, distance, ACCELERATION, DECELERATION, VEHICLE_LENGTH, LANE_WIDTH, PASS_SPEED)
+                
+                 # Compare with the other bikes in recognized_devices for potential crashes
+                for other_bike in recognized_devices.values():
+                    # Assuming the same speed and deceleration for the other bike
+                    tmin_other_bike, tmax_other_bike = calculate_time_intervals(v0, other_bike, ACCELERATION, DECELERATION, VEHICLE_LENGTH, LANE_WIDTH, PASS_SPEED)
 
-                # Classify risk of collision
-                risk = classify_risk(distance, braking_distance, braking_distance)
+                    # Classify risk based on time overlap
+                    risk = classify_risk(tmin_bike, tmax_bike, tmin_other_bike, tmax_other_bike)
 
-                print(f"Risk classification for bike: {risk}")
+                    print(f"Risk classification between my bike and {other_bike}: {risk}")
 
-                # Append bike information
+                # Append bike information into nearby_bikes list for JSON response
                 nearby_bikes.append({
-                    "device": device_address,
-                    "position": bike_position,
-                    "distance": distance,
-                    "braking_distance": braking_distance,
-                    "risk": risk
+                    "device_address": device_address,
+                    "distance": f"{distance:.2f} meters",
+                    "classification": risk
                 })
 
+                # Update the recognized_devices dictionary with new data
+                recognized_devices[device_address] = distance
+
             except Exception as e:
-                print(f"Error processing device {device['address']}: {e}")
+                print(f"Error processing device {device_address}: {e}")
                 continue
-        
-        # Update the shared data for plotting
+
+        # Update the shared data for plotting and response
         nearby_bikes_data = nearby_bikes
+
+        # Print or prepare the JSON output for debugging
+        print(f"Nearby bikes data: {nearby_bikes}")
 
         # Wait before the next scan
         time.sleep(5)
 
-# Plotting function in a separate thread
 def plot_and_save_thread():
-    """Thread responsible for plotting and saving bike data."""
     global nearby_bikes_data
 
     while True:
@@ -106,36 +105,33 @@ def plot_and_save_thread():
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             filename = f'bike_plot_{timestamp}.png'
 
-            # Plot all bikes and their distances
             fig, ax = plot_bikes(nearby_bikes_data)
 
-            # Save the plot to a file with the unique filename
             fig.savefig(filename)
-            plt.close(fig)  # Close the plot to free up memory
+            plt.close(fig)
 
             print(f"Plot saved as {filename}")
 
-        # Wait before checking for new data
         time.sleep(10)
 
-# APIView to start the BLE communication and plotting threads
 class StartBLECommunication(APIView):
     def get(self, request):
         print("GET request received to start BLE communication")
 
         try:
-            # Start the BLE scanning thread
             scanning_thread = threading.Thread(target=ble_scanning_thread)
             scanning_thread.daemon = True
             scanning_thread.start()
 
-            # Start the plotting thread
+            time.sleep(12)
+
             plotting_thread = threading.Thread(target=plot_and_save_thread)
             plotting_thread.daemon = True
             plotting_thread.start()
 
             return JsonResponse({
-                "status": "BLE communication and plotting started"
+                "status": "BLE communication started",
+                "nearby_bikes": nearby_bikes_data
             }, status=status.HTTP_200_OK)
 
         except Exception as e:

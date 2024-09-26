@@ -1,83 +1,86 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import math
 
 def calculate_distance(rssi):
     tx_power = -59  # Assuming Tx Power
     n = 2  # Path-loss exponent for the environment
-    if rssi == 0:
+    if rssi[-1] == 0:
         return -1.0  # if we cannot determine distance, return -1.
-    ratio = rssi / tx_power
+    
+    ratio = rssi[-1] / tx_power
     if ratio < 1.0:
-        return ratio ** 10
+        return math.pow(ratio, 10)
     else:
-        return 10 ** ((tx_power - rssi) / (10 * n))
-
-
-def calculate_braking_distance(speed, deceleration):
-    """Calculate braking distance using speed and deceleration."""
-    return (speed ** 2) / (2 * abs(deceleration))
+        return math.pow(10, (tx_power - rssi[-1]) / (10 * n))
 
 def calculate_time_intervals(speed, distance, acceleration, deceleration, vehicle_length, lane_width, pass_speed):
-    """Calculate time intervals for possible collision based on speed, distance, and braking factors."""
-    # Time to stop
-    t_stop = abs(speed / deceleration)
-    
-    # Time to pass, assuming overtaking situation
-    t_pass = (distance - vehicle_length) / pass_speed if distance > vehicle_length else 0
-    
-    # Minimum and maximum times for possible interaction
-    tmin = min(t_stop, t_pass)
-    tmax = max(t_stop, t_pass)
-    
-    return tmin, tmax
-
-def classify_risk(distance, braking_distance_1, braking_distance_2):
-    """Classify risk based on the braking distances and the actual distance between bikes."""
-    total_braking_distance = braking_distance_1 + braking_distance_2
-
-    if distance <= total_braking_distance:
-        return "CRITICAL"
-    elif distance <= total_braking_distance * 2:
-        return "ATTENTION"
+    # Time to reach the point with acceleration
+    if acceleration > 0:
+        t_min = (-speed + math.sqrt(speed**2 + 2 * acceleration * distance)) / acceleration
     else:
-        return "SAFE"
+        t_min = float('inf')  # If no acceleration, the bike won't speed up
+
+    # Time to pass the bike or stop
+    t_pass = (vehicle_length + lane_width) / pass_speed
+
+    # Time to stop or pass (if stopping is impossible)
+    if speed**2 + 2 * deceleration * distance >= 0:
+        t_max = (-speed + math.sqrt(speed**2 + 2 * deceleration * distance)) / deceleration + t_pass
+    else:
+        t_max = float('inf')  # If stopping is impossible, it keeps moving forward
+    
+    return t_min, t_max
+
+def classify_risk(tmin_bike1, tmax_bike1, tmin_bike2, tmax_bike2):
+    if tmin_bike1 > tmax_bike2 or tmin_bike2 > tmax_bike1:
+        return "NO-CRASH"  # No time overlap, no risk
+    elif tmax_bike1 == float('inf') and tmax_bike2 == float('inf'):
+        return "SAFE"  # Both bikes can stop safely
+    elif tmax_bike1 == float('inf') or tmax_bike2 == float('inf'):
+        return "ATTENTION"  # One bike can stop, but risk still exists
+    else:
+        return "CRITICAL"  # High chance of collision due to overlapping intervals
 
 
 def plot_bikes(bike_data):
-    """
-    Plot bikes around the central bike (our bike at 0,0), grouping them by risk category.
+    # Plot bikes around the central bike (our bike at 0,0), grouping them by risk category.
     
-    bike_data: List of dictionaries containing 'device', 'distance', 'braking_distance', 'risk', and 'position'.
-    """
     fig, ax = plt.subplots(figsize=(10, 10))
 
     # Colors for different risk levels
     risk_colors = {
         "CRITICAL": 'red',
         "ATTENTION": 'orange',
-        "SAFE": 'green'
+        "SAFE": 'green',
+        "NO-CRASH": 'gray'
     }
 
     # Place the user's bike at the center (origin)
     ax.plot(0, 0, 'bo', markersize=12, label="My Bike (0,0)")
 
-    # Separate bikes by risk category
+    # Separate bikes by risk category (use 'classification' instead of 'risk')
     for risk_level in risk_colors.keys():
-        risk_bikes = [bike for bike in bike_data if bike['risk'] == risk_level]
+        risk_bikes = [bike for bike in bike_data if bike['classification'] == risk_level]
         x_positions = []
         y_positions = []
         
         # Calculate positions for bikes based on their distance
         for bike in risk_bikes:
-            distance = bike['distance']
-            angle = np.random.uniform(0, 2 * np.pi)  # Random angle
-            x_pos = distance * np.cos(angle)
-            y_pos = distance * np.sin(angle)
-            x_positions.append(x_pos)
-            y_positions.append(y_pos)
+            try:
+                # Convert the 'distance' from "X meters" to float
+                distance = float(bike['distance'].split()[0])  # Extract numeric value
+                angle = np.random.uniform(0, 2 * np.pi)  # Random angle
+                x_pos = distance * np.cos(angle)
+                y_pos = distance * np.sin(angle)
+                x_positions.append(x_pos)
+                y_positions.append(y_pos)
+            except Exception as e:
+                print(f"Error processing bike distance: {bike['distance']}. Error: {e}")
+                continue
         
         # Plot bikes in this risk category
-        ax.plot(x_positions, y_positions, 'o', markersize=6, color=risk_colors[risk_level], label=f"{risk_level} Bikes")
+        ax.plot(x_positions, y_positions, 'o', markersize=6, color=risk_colors[risk_level], label=f"{risk_level}")
 
     # Set plot properties
     ax.set_xlabel("X Position (meters)")
@@ -85,9 +88,10 @@ def plot_bikes(bike_data):
     ax.set_title("Bike Distances Around My Bike (at 0,0)")
     
     # Adjust axes limits based on the maximum distance
-    max_distance = max(bike['distance'] for bike in bike_data)
-    ax.set_xlim(-max_distance - 10, max_distance + 10)
-    ax.set_ylim(-max_distance - 10, max_distance + 10)
+    if bike_data:
+        max_distance = max(float(bike['distance'].split()[0]) for bike in bike_data)
+        ax.set_xlim(-max_distance - 10, max_distance + 10)
+        ax.set_ylim(-max_distance - 10, max_distance + 10)
 
     # Move the legend outside of the plot
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='medium')
