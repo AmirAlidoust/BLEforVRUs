@@ -1,5 +1,10 @@
-# BLEforVRUs
- Bluetooth Low Energy (BLE) Beacons for supporting Vulnerable Road Users (VRU)
+# Bluetooth Low Energy (BLE) Beacons for supporting Vulnerable Road Users (VRU)
+
+This project is done as part of the master's curriculum of RCSE at TU Ilmenau and focuses on addressing the risk of collisions between cyclists by developing a real-time detection system using Bluetooth Low Energy (BLE) technology.
+
+## Methodology
+
+The BLE bike detection system effectively integrates Python, Django, and RESTful APIs to provide real-time scanning, risk assessment, and visualization of nearby bikes. By leveraging multithreading for concurrent scanning and data visualization, the system offers cyclists timely insights into potential collision risks, enhancing safety and awareness.
 
 # Steps for Django setup and to run server:
 
